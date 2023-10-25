@@ -1,42 +1,54 @@
 package pasetobd
 
 import (
-    "fmt"
-    "net/http"
+	"encoding/json"
+	"net/http"
+	"os"
+	"github.com/aiteung/atdb"
+	"github.com/whatsauth/watoken"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
-func main() {
-    // Menangani permintaan untuk halaman login
-    http.HandleFunc("/login", loginHandler)
-    http.HandleFunc("/success", successHandler)
+// func GCFHandler(MONGOCONNSTRINGENV, dbname, collectionname string) string {
+// 	mconn := SetConnection(MONGOCONNSTRINGENV, dbname)
+// 	datagedung := GetAllBangunanLineString(mconn, collectionname)
+// 	return GCFReturnStruct(datagedung)
+// }
 
-    // Menjalankan server HTTP pada port 8080
-    http.ListenAndServe(":8080", nil)
+func GCFPostHandler(PASETOPRIVATEKEYENV, MONGOCONNSTRINGENV, dbname, collectionname string, r *http.Request) string {
+	var Response Credential
+	Response.Status = false
+	mconn := SetConnection(MONGOCONNSTRINGENV, dbname)
+	var datauser User
+	err := json.NewDecoder(r.Body).Decode(&datauser)
+	if err != nil {
+		Response.Message = "error parsing application/json: " + err.Error()
+	} else {
+		if IsPasswordValid(mconn, collectionname, datauser) {
+			Response.Status = true
+			tokenstring, err := watoken.Encode(datauser.Username, os.Getenv(PASETOPRIVATEKEYENV))
+			if err != nil {
+				Response.Message = "Gagal Encode Token : " + err.Error()
+			} else {
+				Response.Message = "Selamat Datang"
+				Response.Token = tokenstring
+			}
+		} else {
+			Response.Message = "Password Salah"
+		}
+	}
+
+	return GCFReturnStruct(Response)
 }
 
-func loginHandler(w http.ResponseWriter, r *http.Request) {
-    if r.Method == http.MethodPost {
-        username := r.FormValue("username")
-        password := r.FormValue("password")
-
-        if isValidLogin(username, password) {
-            http.Redirect(w, r, "/success", http.StatusFound)
-            return
-        }
-
-        http.Redirect(w, r, "/", http.StatusFound)
-        return
-    }
-
-    http.ServeFile(w, r, "login.html")
+func GCFReturnStruct(DataStuct any) string {
+	jsondata, _ := json.Marshal(DataStuct)
+	return string(jsondata)
 }
 
-func successHandler(w http.ResponseWriter, r *http.Request) {
-    fmt.Fprintf(w, "Login berhasil!")
-}
-
-func isValidLogin(username, password string) bool {
-    // Implementasi validasi login di sini
-    // Contoh sederhana: jika username dan password adalah "admin", maka login berhasil
-    return username == "admin" && password == "admin"
+func InsertUser(db *mongo.Database, collection string, userdata User) string {
+	hash, _ := HashPassword(userdata.Password)
+	userdata.Password = hash
+	atdb.InsertOneDoc(db, collection, userdata)
+	return "Ini username : " + userdata.Username + "ini password : " + userdata.Password
 }
